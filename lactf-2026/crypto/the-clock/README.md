@@ -75,16 +75,15 @@ The fundamental vulnerability is that the points of the algebraic group must sat
 
 Of course, this requires us knowing $p$, which while typically is public information in this case it is not. However, $p$ is actually quite easy to recover. This is because we know that the group must be closed under `clockadd` and `scalarmult` to ensure correctness, i.e., the norm must be constant under these operations. For $z=y+xi$, $N(z) = x^{2} + y^{2}$. Suppose we restrict the norm to $N(z) = c$. If we `clockadd` two points, we will have the following:
 
-$$
-N(z_1)=x_1^2 + y_1^2 = c \\
-N(z_2)= x_2^2 + y_2^2 = c \\
-N(z_1z_2) = (y_{1}y_{2}-x_{1}x_{2})^2 + (x_{1}y_{2}+y_{1}x_{2})^2 \\
-N(z_1z_2) = \left((y_1y_2)^2 - 2y_1y_2x_1x_2 + (x_1x_2)^2\right) + \left((x_1y_2)^2+2x_1y_2y_1x_2 + (y_1x_2)^2\right) \\
-N(z_1z_2) = (y_1y_2)^2  + (x_1x_2)^2 + (x_1y_2)^2 + (y_1x_2)^2 \\
-N(z_1z_2) = x_1^2(y_2^2+x_2^2) + y_1^2(y_2^2+x_2^2) \\ 
-N(z_1z_2) = (x_1^2 + y_1^2)(x_2^2 + y_2^2) \\ 
-N(z_1z_2) = c^2
-$$
+$$N(z_1)=x_1^2 + y_1^2 = c$$
+$$N(z_2)= x_2^2 + y_2^2 = c$$
+$$N(z_1z_2) = (y_{1}y_{2}-x_{1}x_{2})^2 + (x_{1}y_{2}+y_{1}x_{2})^2$$
+$$N(z_1z_2) = \left((y_1y_2)^2 - 2y_1y_2x_1x_2 + (x_1x_2)^2\right) + \left((x_1y_2)^2+2x_1y_2y_1x_2 + (y_1x_2)^2\right)$$
+$$N(z_1z_2) = (y_1y_2)^2  + (x_1x_2)^2 + (x_1y_2)^2 + (y_1x_2)^2$$
+$$N(z_1z_2) = x_1^2(y_2^2+x_2^2) + y_1^2(y_2^2+x_2^2)$$
+$$N(z_1z_2) = (x_1^2 + y_1^2)(x_2^2 + y_2^2)$$
+$$N(z_1z_2) = c^2$$
+
 
 Thus, in order for the norm to remain constant $c=c^2 \implies c=1$. We now know that $x^2 + y^2 = 1$, which means that all points must lie on the unit circle, hence the name `clockadd`. With this, we know that $x^2 + y^2 - 1 \equiv 0 \pmod {p}$, which means that the prime $p$ divides $x^2 + y^2 - 1$ for any valid point. Thus, we can recover $p$ by computing the gcd of the base pase point, Alice's public point, and Bob's public point.
 
