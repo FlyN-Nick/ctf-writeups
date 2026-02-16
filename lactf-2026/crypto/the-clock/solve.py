@@ -38,7 +38,7 @@ def clock_add(P1, P2, p):
 
 
 def scalar_mult(P, n, p):
-    """Iterative implementation to avoid hitting python's recursion limit."""
+    """Iterative implementation of double-and-add algorithm to avoid hitting python's recursion limit."""
     R = (0, 1)
     Q = P
     while n > 0:
@@ -60,7 +60,7 @@ def recover_prime(points):
     return reduce(gcd, candidates)
 
 
-def factorize_small(n):
+def factorize_smooth(n):
     """Trial-division factorization. Fast here because p+1 is very smooth."""
     factors = {}
     while n % 2 == 0:
@@ -82,7 +82,7 @@ def factorize_small(n):
 
 
 def dlog_bsgs(H, G, n, p):
-    """Solve k such that H = k*G in subgroup of order n."""
+    """Solve k such that H = k*G in subgroup of order n using Baby-step Giant-step algorithm."""
     m = isqrt(n) + 1
     cur = (0, 1)
     baby = {cur: 0}
@@ -124,7 +124,7 @@ def crt_all(mods, rems):
 
 def pohlig_hellman_two_targets(G, H1, H2, order, p):
     """Solve for x1, x2 such that H1 = x1*G and H2 = x2*G using Pohlig-Hellman algorithm."""
-    factors = factorize_small(order)
+    factors = factorize_smooth(order)
     mods = []
     rems1 = []
     rems2 = []
@@ -147,20 +147,18 @@ def main():
     p = recover_prime([BASE, ALICE_PUB, BOB_PUB])
     print(f"recovered p: {p}")
 
-    order = p + 1
-    alice_secret, bob_secret = pohlig_hellman_two_targets(
-        BASE, ALICE_PUB, BOB_PUB, order, p
-    )
+    group_order = p + 1
+    alice_secret, bob_secret = pohlig_hellman_two_targets(BASE, ALICE_PUB, BOB_PUB, group_order, p)
     print(f"alice's secret: {alice_secret}")
     print(f"bob's secret: {bob_secret}")
 
     shared = shared_alice = scalar_mult(BOB_PUB, alice_secret, p)
     shared_bob = scalar_mult(ALICE_PUB, bob_secret, p)
     assert shared_alice == shared_bob
-    
     print(f"shared secret: {shared}")
+    
     key = md5(f"{shared[0]},{shared[1]}".encode()).digest()
-    print(f"symmetric key: {key}")
+    print(f"symmetric key: {key.hex()}")
 
     enc = bytes.fromhex(ENC_FLAG_HEX)
     pt = AES.new(key, AES.MODE_ECB).decrypt(enc)

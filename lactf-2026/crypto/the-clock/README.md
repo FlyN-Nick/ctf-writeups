@@ -17,7 +17,7 @@ The challenge implements a Diffie–Hellman–style key exchange over a vulnerab
 
 The challenge author *freed* provides the [source code](./chall.py) of the key exchange, with the (typically public) modulus prime $p$ redatected, as well as an [output](./output.txt) containing Alice and Bob's public keys and the encrypted flag produced by the source code.
 
-Initially, the key exchange seems to possibly be ECDH, because addition and scalar multiplication operations are defined for points over a field. Below is how the code defines the finite field $\mathbb{F}_p=\mathbb{Z}/p\mathbb{Z}$. Everything is intuitive besides the division operation, which is implemented based on Fermat's Little Theorem where for non-zero $x $ and prime $p$, $x^{p} \equiv x \pmod{p} \implies x^{p-1}\equiv 1 \pmod{p} \implies x^{p-2} \equiv x^{-1}\pmod{p}$ and $a / b \equiv a \cdot b^{-1} \pmod{p}$,
+Initially, the key exchange seems to possibly be ECDH, because addition and scalar multiplication operations are defined for points over a field. Below is how the code defines the finite field $\mathbb{F}_p=\mathbb{Z}/p\mathbb{Z}$. Everything is intuitive besides the division operation, which is implemented based on Fermat's Little Theorem where for non-zero $x$ and prime $p$, $x^{p} \equiv x \pmod{p} \implies x^{p-1}\equiv 1 \pmod{p} \implies x^{p-2} \equiv x^{-1}\pmod{p}$ and $a / b \equiv a \cdot b^{-1} \pmod{p}$,
 
 ```python
 def F(p):
@@ -44,7 +44,7 @@ def F(p):
   return F
 ```
 
-However, the group's addition operation `clockadd` is not addition of points on an elliptic curve, instead it is actually complex multiplication. If we interpret each point $(x,y)$ representing the complex number $y + ix$, then $(y_1 + ix_1)(y_2 + ix_2)=(y_{1}y_{2}-x_{1}x_{2}, x_{1}y_{2}+y_{1}x_{2})$.
+However, the group law `clockadd` is not addition of points on an elliptic curve, instead it is actually complex multiplication. If we interpret each point $(x,y)$ as representing the complex number $y + ix$, then $(y_1 + ix_1)(y_2 + ix_2)=(y_{1}y_{2}-x_{1}x_{2}, x_{1}y_{2}+y_{1}x_{2})$.
 
 ```python
 def clockadd(P1,P2):
@@ -55,191 +55,50 @@ def clockadd(P1,P2):
   return x3,y3
 ```
 
+Since the "addition" operation is multiplication, we seemingly have a multiplicative group. This is confirmed by the scalar "multiplication" operation, which is actually just exponentiation--note that (0,1) is the multiplicative identity.
+
+```python
+def scalarmult(P, n):
+  # caveat: caller must ensure that n is nonnegative
+  # caveat: n is limited by python's recursion limit
+  if n == 0: return (Fp(0),Fp(1))
+  if n == 1: return P
+  Q = scalarmult(P, n//2)
+  Q = clockadd(Q,Q)
+  if n % 2: Q = clockadd(P,Q)
+  return Q
+```
+
 ## Vulnerability
 
-The fundamental vulnerability is that the custom algebraic group is a multiplicative group with known order $p+1$, which is not prime and is very smooth. The smoothness makes the discrete log problem easy with the Pohlig-Hellman attack.
+The fundamental vulnerability is that the points of the algebraic group must satisfy $x^2 + y^2 = 1$, and therefore the group order must either be $p+1$ or $p-1$ depending on if $p \equiv 3 \pmod{4}$. The group order for the prime chosen ends up being $p+1$ which is very smooth. The smoothness makes the discrete log problem easy with the **Pohlig-Hellman** attack.
 
-- [CWE-327](https://cwe.mitre.org/data/definitions/327.html)
+Of course, this requires us knowing $p$, which while typically is public information in this case it is not. However, $p$ is actually quite easy to recover. This is because we know that the group must be closed under `clockadd` and `scalarmult` to ensure correctness, i.e., the norm must be constant under these operations. For $z=y+xi$, $N(z) = x^{2} + y^{2}$. Suppose we restrict the norm to $N(z) = c$. If we `clockadd` two points, we will have the following:
+
+$$
+N(z_1)=x_1^2 + y_1^2 = c \\
+N(z_2)= x_2^2 + y_2^2 = c \\
+N(z_1z_2) = (y_{1}y_{2}-x_{1}x_{2})^2 + (x_{1}y_{2}+y_{1}x_{2})^2 \\
+N(z_1z_2) = \left((y_1y_2)^2 - 2y_1y_2x_1x_2 + (x_1x_2)^2\right) + \left((x_1y_2)^2+2x_1y_2y_1x_2 + (y_1x_2)^2\right) \\
+N(z_1z_2) = (y_1y_2)^2  + (x_1x_2)^2 + (x_1y_2)^2 + (y_1x_2)^2 \\
+N(z_1z_2) = x_1^2(y_2^2+x_2^2) + y_1^2(y_2^2+x_2^2) \\ 
+N(z_1z_2) = (x_1^2 + y_1^2)(x_2^2 + y_2^2) \\ 
+N(z_1z_2) = c^2
+$$
+
+Thus, in order for the norm to remain constant $c=c^2 \implies c=1$. We now know that $x^2 + y^2 = 1$, which means that all points must lie on the unit circle, hence the name `clockadd`. With this, we know that $x^2 + y^2 - 1 \equiv 0 \pmod {p}$, which means that the prime $p$ divides $x^2 + y^2 - 1$ for any valid point. Thus, we can recover $p$ by computing the gcd of the base pase point, Alice's public point, and Bob's public point.
+
+This vulnerability would fall under [CWE-327: Use of a Broken or Risky Cryptographic Algorithm](https://cwe.mitre.org/data/definitions/327.html).
 
 ## Exploitation
 
-```python
-#!/usr/bin/env python3
+The below steps are implemented in [solve.py](./solve.py):
 
-from math import gcd, isqrt
-from functools import reduce
-from hashlib import md5
-
-try:
-    from Crypto.Cipher import AES
-    from Crypto.Util.Padding import unpad
-except ImportError:
-    raise SystemExit("pycryptodome is required to run this script. Install with: `pip install pycryptodome`")
-
-# public keys provided by output.txt
-ALICE_PUB = (
-    13109366899209289301676180036151662757744653412475893615415990437597518621948,
-    5214723011482927364940019305510447986283757364508376959496938374504175747801,
-)
-BOB_PUB = (
-    1970812974353385315040605739189121087177682987805959975185933521200533840941,
-    12973039444480670818762166333866292061530850590498312261363790018126209960024,
-)
-
-# encrypted flag provided by output.txt
-ENC_FLAG_HEX = "d345a465538e3babd495cd89b43a224ac93614e987dfb4a6d3196e2d0b3b57d9"
-
-# base point from chall.py
-BASE = (
-    13187661168110324954294058945757101408527953727379258599969622948218380874617,
-    5650730937120921351586377003219139165467571376033493483369229779706160055207,
-)
-
-
-def clock_add(P1, P2, p):
-    """Add two points on the "clock curve" modulo p."""
-    x1, y1 = P1
-    x2, y2 = P2
-    return ((x1 * y2 + y1 * x2) % p, (y1 * y2 - x1 * x2) % p)
-
-
-def scalar_mult(P, n, p):
-    """Iterative implementation to avoid hitting python's recursion limit."""
-    R = (0, 1)
-    Q = P
-    while n > 0:
-        if n & 1:
-            R = clock_add(R, Q, p)
-        Q = clock_add(Q, Q, p)
-        n >>= 1
-    return R
-
-
-def negate_point(P, p):
-    x, y = P
-    return ((-x) % p, y)
-
-
-def recover_prime(points):
-    """Recover p from the public points by computing gcd of x^2+y^2-1."""
-    candidates = [x * x + y * y - 1 for x, y in points]
-    return reduce(gcd, candidates)
-
-
-def factorize_small(n):
-    """Trial-division factorization. Fast here because p+1 is very smooth."""
-    factors = {}
-    while n % 2 == 0:
-        factors[2] = factors.get(2, 0) + 1
-        n //= 2
-
-    d = 3
-    lim = isqrt(n)
-    while d <= lim and n > 1:
-        while n % d == 0:
-            factors[d] = factors.get(d, 0) + 1
-            n //= d
-            lim = isqrt(n)
-        d += 2
-
-    if n > 1:
-        factors[n] = factors.get(n, 0) + 1
-    return factors
-
-
-def dlog_bsgs(H, G, n, p):
-    """Solve k such that H = k*G in subgroup of order n."""
-    m = isqrt(n) + 1
-    cur = (0, 1)
-    baby = {cur: 0}
-    for j in range(1, m):
-        cur = clock_add(cur, G, p)
-        if cur not in baby:
-            baby[cur] = j
-
-    mG = scalar_mult(G, m, p)
-    neg_mG = negate_point(mG, p)
-
-    gamma = H
-    for i in range(m + 1):
-        j = baby.get(gamma)
-        if j is not None:
-            k = i * m + j
-            if k < n:
-                return k
-        gamma = clock_add(gamma, neg_mG, p)
-    raise ValueError("No discrete log found.")
-
-
-def crt_pair(a1, m1, a2, m2):
-    """Solve x ≡ a1 (mod m1) and x ≡ a2 (mod m2) for coprime m1, m2 with Chinese Remainder Theorem."""
-    inv = pow(m1, -1, m2)
-    t = ((a2 - a1) * inv) % m2
-    x = a1 + m1 * t
-    return x % (m1 * m2), m1 * m2
-
-
-def crt_all(mods, rems):
-    """Solve x ≡ a (mod m) for all (a, m) pairs with Chinese Remainder Theorem."""
-    x = rems[0]
-    m = mods[0]
-    for i in range(1, len(mods)):
-        x, m = crt_pair(x, m, rems[i], mods[i])
-    return x
-
-
-def pohlig_hellman_two_targets(G, H1, H2, order, p):
-    """Solve for x1, x2 such that H1 = x1*G and H2 = x2*G using Pohlig-Hellman algorithm."""
-    factors = factorize_small(order)
-    mods = []
-    rems1 = []
-    rems2 = []
-
-    for q, e in factors.items():
-        pe = q ** e
-        gi = scalar_mult(G, order // pe, p)
-        h1i = scalar_mult(H1, order // pe, p)
-        h2i = scalar_mult(H2, order // pe, p)
-        x1 = dlog_bsgs(h1i, gi, pe, p)
-        x2 = dlog_bsgs(h2i, gi, pe, p)
-        mods.append(pe)
-        rems1.append(x1)
-        rems2.append(x2)
-
-    return crt_all(mods, rems1), crt_all(mods, rems2)
-
-
-def main():
-    p = recover_prime([BASE, ALICE_PUB, BOB_PUB])
-    print(f"recovered p: {p}")
-
-    order = p + 1
-    alice_secret, bob_secret = pohlig_hellman_two_targets(
-        BASE, ALICE_PUB, BOB_PUB, order, p
-    )
-    print(f"alice's secret: {alice_secret}")
-    print(f"bob's secret: {bob_secret}")
-
-    shared = shared_alice = scalar_mult(BOB_PUB, alice_secret, p)
-    shared_bob = scalar_mult(ALICE_PUB, bob_secret, p)
-    assert shared_alice == shared_bob
-  
-    print(f"shared secret: {shared}")
-    key = md5(f"{shared[0]},{shared[1]}".encode()).digest()
-    print(f"symmetric key: {key}")
-
-    enc = bytes.fromhex(ENC_FLAG_HEX)
-    pt = AES.new(key, AES.MODE_ECB).decrypt(enc)
-    flag = unpad(pt, 16)
-
-    print("decrypted flag:", flag.decode())
-
-
-if __name__ == "__main__":
-    main()
-
-```
+1. Recover prime $p$ by computing `p = gcd(base_point, alice_public, bob_public)`/
+2. Recover either private key by "solving" the DLP by exploiting the smoothness of the group order with the Pohlig-Hellman attack.
+3. Use either private key to compute shared secret symmetric key.
+4. Decrypt the flag with recovered symmetric key.
 
 ## Remediation
 
-Don't define your own custom algebraic group with known group order for the basis of your encryption. In general, don't define your own custom diffie-hellman; instead use ECC standards such as X25519 or P-256.
+Don't define your own custom algebraic group with known group order for the basis of your encryption, but if you do, ensure that the group order is not smooth! In general, don't define your own custom diffie-hellman; instead use ECC standards such as X25519 or P-256.
