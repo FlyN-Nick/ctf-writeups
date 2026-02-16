@@ -4,6 +4,12 @@ from math import gcd, isqrt
 from functools import reduce
 from hashlib import md5
 
+try:
+    from Crypto.Cipher import AES
+    from Crypto.Util.Padding import unpad
+except ImportError:
+    raise SystemExit("pycryptodome is required to run this script. Install with: `pip install pycryptodome`")
+
 # public keys provided by output.txt
 ALICE_PUB = (
     13109366899209289301676180036151662757744653412475893615415990437597518621948,
@@ -25,13 +31,14 @@ BASE = (
 
 
 def clock_add(P1, P2, p):
+    """Add two points on the "clock curve" modulo p."""
     x1, y1 = P1
     x2, y2 = P2
     return ((x1 * y2 + y1 * x2) % p, (y1 * y2 - x1 * x2) % p)
 
 
 def scalar_mult(P, n, p):
-    # Iterative double-and-add (avoids recursion limits).
+    """Iterative implementation to avoid hitting python's recursion limit."""
     R = (0, 1)
     Q = P
     while n > 0:
@@ -42,13 +49,13 @@ def scalar_mult(P, n, p):
     return R
 
 
-def point_neg(P, p):
+def negate_point(P, p):
     x, y = P
     return ((-x) % p, y)
 
 
 def recover_prime(points):
-    # Points satisfy x^2 + y^2 == 1 (mod p), so p | (x^2 + y^2 - 1).
+    """Recover p from the public points by computing gcd of x^2+y^2-1."""
     candidates = [x * x + y * y - 1 for x, y in points]
     return reduce(gcd, candidates)
 
@@ -85,7 +92,7 @@ def dlog_bsgs(H, G, n, p):
             baby[cur] = j
 
     mG = scalar_mult(G, m, p)
-    neg_mG = point_neg(mG, p)
+    neg_mG = negate_point(mG, p)
 
     gamma = H
     for i in range(m + 1):
@@ -99,6 +106,7 @@ def dlog_bsgs(H, G, n, p):
 
 
 def crt_pair(a1, m1, a2, m2):
+    """Solve x ≡ a1 (mod m1) and x ≡ a2 (mod m2) for coprime m1, m2 with Chinese Remainder Theorem."""
     inv = pow(m1, -1, m2)
     t = ((a2 - a1) * inv) % m2
     x = a1 + m1 * t
@@ -106,6 +114,7 @@ def crt_pair(a1, m1, a2, m2):
 
 
 def crt_all(mods, rems):
+    """Solve x ≡ a (mod m) for all (a, m) pairs with Chinese Remainder Theorem."""
     x = rems[0]
     m = mods[0]
     for i in range(1, len(mods)):
@@ -114,6 +123,7 @@ def crt_all(mods, rems):
 
 
 def pohlig_hellman_two_targets(G, H1, H2, order, p):
+    """Solve for x1, x2 such that H1 = x1*G and H2 = x2*G using Pohlig-Hellman algorithm."""
     factors = factorize_small(order)
     mods = []
     rems1 = []
@@ -151,14 +161,6 @@ def main():
     print(f"shared secret: {shared}")
     key = md5(f"{shared[0]},{shared[1]}".encode()).digest()
     print(f"symmetric key: {key}")
-
-    try:
-        from Crypto.Cipher import AES
-        from Crypto.Util.Padding import unpad
-    except Exception as exc:  # pragma: no cover
-        raise SystemExit(
-            "Recovered key, but pycryptodome is missing. Install with: pip install pycryptodome"
-        ) from exc
 
     enc = bytes.fromhex(ENC_FLAG_HEX)
     pt = AES.new(key, AES.MODE_ECB).decrypt(enc)
