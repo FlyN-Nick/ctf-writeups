@@ -113,12 +113,11 @@ def crt_pair(a1, m1, a2, m2):
     return x % (m1 * m2), m1 * m2
 
 
-def crt_all(mods, rems):
+def crt_all(remainders, moduli):
     """Solve x ≡ a (mod m) for all (a, m) pairs with Chinese Remainder Theorem."""
-    x = rems[0]
-    m = mods[0]
-    for i in range(1, len(mods)):
-        x, m = crt_pair(x, m, rems[i], mods[i])
+    x, m = remainders[0], moduli[0]
+    for a, mod in zip(remainders[1:], moduli[1:]):
+        x, m = crt_pair(x, m, a, mod)
     return x
 
 
@@ -140,7 +139,7 @@ def pohlig_hellman_two_targets(p_base, p_alice, p_bob, group_order, p):
         remainders_alice.append(x1)
         remainders_bob.append(x2)
 
-    return crt_all(moduli, remainders_alice), crt_all(moduli, remainders_bob)
+    return crt_all(remainders_alice, moduli), crt_all(remainders_bob, moduli)
 
 
 def main():
