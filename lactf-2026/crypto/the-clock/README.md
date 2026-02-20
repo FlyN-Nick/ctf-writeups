@@ -17,7 +17,7 @@ The challenge implements a Diffie–Hellman–style key exchange over a vulnerab
 
 The challenge author *freed* provides the [source code](./chall.py) of the key exchange, with the (typically public) modulus prime $p$ redatected, as well as an [output](./output.txt) containing Alice and Bob's public keys and the encrypted flag produced by the source code.
 
-Initially, the key exchange seems to possibly be ECDH, because addition and scalar multiplication operations are defined for points over a field. Below is how the code defines the finite field $\mathbb{F}_p=\mathbb{Z}/p\mathbb{Z}$. Everything is intuitive besides the division operation, which is implemented based on Fermat's Little Theorem where for non-zero $x$ and prime $p$, $x^{p} \equiv x \pmod{p} \implies x^{p-1}\equiv 1 \pmod{p} \implies x^{p-2} \equiv x^{-1}\pmod{p}$ and $a / b \equiv a \cdot b^{-1} \pmod{p}$,
+Initially, the key exchange seems to possibly be ECDH, because addition and scalar multiplication operations (`clock_add` and `scalarmult`) are defined for points over a field. Below is how the code defines the finite field $\mathbb{F}_p=\mathbb{Z}/p\mathbb{Z}$. Besides division, everything is simply defined as their integer operation equivalents mod $p$. The division operation is implemented based on Fermat's Little Theorem where for non-zero $x$ and prime $p$, $x^{p} \equiv x \pmod{p} \implies x^{p-1}\equiv 1 \pmod{p} \implies x^{p-2} \equiv x^{-1}\pmod{p}$ and $a / b \equiv a \cdot b^{-1} \pmod{p}$,
 
 ```python
 def F(p):
