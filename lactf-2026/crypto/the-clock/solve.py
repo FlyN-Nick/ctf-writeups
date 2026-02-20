@@ -147,7 +147,7 @@ def main():
     p = recover_prime([BASE, ALICE_PUB, BOB_PUB])
     print(f"recovered p: {p}")
 
-    group_order = p + 1
+    group_order = p + 1 if p % 4 == 3 else p - 1
     alice_secret, bob_secret = pohlig_hellman_two_targets(BASE, ALICE_PUB, BOB_PUB, group_order, p)
     print(f"alice's secret: {alice_secret}")
     print(f"bob's secret: {bob_secret}")
