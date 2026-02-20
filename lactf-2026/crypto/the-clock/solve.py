@@ -122,25 +122,25 @@ def crt_all(mods, rems):
     return x
 
 
-def pohlig_hellman_two_targets(G, H1, H2, order, p):
-    """Solve for x1, x2 such that H1 = x1*G and H2 = x2*G using Pohlig-Hellman algorithm."""
-    factors = factorize_smooth(order)
-    mods = []
-    rems1 = []
-    rems2 = []
+def pohlig_hellman_two_targets(p_base, p_alice, p_bob, group_order, p):
+    """Solve for x1, x2 such that p_alice = x1 * p_base and p_bob = x2 * p_base using Pohlig-Hellman attack."""
+    prime_power_factors = factorize_smooth(group_order)
+    moduli = []
+    remainders_alice = []
+    remainders_bob = []
 
-    for q, e in factors.items():
-        pe = q ** e
-        gi = scalar_mult(G, order // pe, p)
-        h1i = scalar_mult(H1, order // pe, p)
-        h2i = scalar_mult(H2, order // pe, p)
-        x1 = dlog_bsgs(h1i, gi, pe, p)
-        x2 = dlog_bsgs(h2i, gi, pe, p)
-        mods.append(pe)
-        rems1.append(x1)
-        rems2.append(x2)
+    for prime_factor, exponent in prime_power_factors.items():
+        prime_power = prime_factor ** exponent
+        p_base_reduced = scalar_mult(p_base, group_order // prime_power, p)
+        p_alice_reduced = scalar_mult(p_alice, group_order // prime_power, p)
+        p_bob_reduced = scalar_mult(p_bob, group_order // prime_power, p)
+        x1 = dlog_bsgs(p_alice_reduced, p_base_reduced, prime_power, p)
+        x2 = dlog_bsgs(p_bob_reduced, p_base_reduced, prime_power, p)
+        moduli.append(prime_power)
+        remainders_alice.append(x1)
+        remainders_bob.append(x2)
 
-    return crt_all(mods, rems1), crt_all(mods, rems2)
+    return crt_all(moduli, remainders_alice), crt_all(moduli, remainders_bob)
 
 
 def main():

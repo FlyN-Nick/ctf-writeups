@@ -127,7 +127,6 @@ The below steps are implemented in [solve.py](./solve.py):
 
    p = recover_prime([BASE, ALICE_PUB, BOB_PUB])
    ```
-
 2. Recover either Alice's or Bob's private key by "solving" the DLP by exploiting the smoothness of the group order with the Pohlig-Hellman attack.
 
    1. Factor the group order into its prime factors with trial division.
@@ -157,7 +156,25 @@ The below steps are implemented in [solve.py](./solve.py):
    2. For each prime factor, compute the discrete log mod that prime factor by brute force with the baby-step giant-step algorithm.
 
    ```python
-   print("todo")
+   def pohlig_hellman_two_targets(p_base, p_alice, p_bob, group_order, p):
+       """Solve for x1, x2 such that p_alice = x1 * p_base and p_bob = x2 * p_base using Pohlig-Hellman attack."""
+       prime_power_factors = factorize_smooth(group_order)
+       moduli = []
+       remainders_alice = []
+       remainders_bob = []
+
+       for prime_factor, exponent in prime_power_factors.items():
+           prime_power = prime_factor ** exponent
+           p_base_reduced = scalar_mult(p_base, group_order // prime_power, p)
+           p_alice_reduced = scalar_mult(p_alice, group_order // prime_power, p)
+           p_bob_reduced = scalar_mult(p_bob, group_order // prime_power, p)
+           x1 = dlog_bsgs(p_alice_reduced, p_base_reduced, prime_power, p)
+           x2 = dlog_bsgs(p_bob_reduced, p_base_reduced, prime_power, p)
+           moduli.append(prime_power)
+           remainders_alice.append(x1)
+           remainders_bob.append(x2)
+
+       return crt_all(moduli, remainders_alice), crt_all(moduli, remainders_bob)
    ```
 
    3. Combine the results with the Chinese Remainder Theorem to get the private key.
@@ -178,14 +195,12 @@ The below steps are implemented in [solve.py](./solve.py):
            x, m = crt_pair(x, m, rems[i], mods[i])
        return x
    ```
-
 3. Use either private key to compute shared secret symmetric key.
 
    ```python
    shared = scalar_mult(BOB_PUB, alice_secret, p)
    key = md5(f"{shared[0]},{shared[1]}".encode()).digest()
    ```
-
 4. Decrypt the flag with recovered symmetric key.
 
    ```python
