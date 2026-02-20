@@ -118,9 +118,80 @@ This vulnerability would fall under [CWE-327: Use of a Broken or Risky Cryptogra
 The below steps are implemented in [solve.py](./solve.py):
 
 1. Recover prime $p$ by computing $p = \text{gcd}(x_{\text{base}}^2 + y_{\text{base}}^2 - 1, x_{\text{alice}}^2 + y_{\text{alice}}^2 - 1, x_{\text{bob}}^2 + y_{\text{bob}}^2 - 1)$.
-2. Recover either private key by "solving" the DLP by exploiting the smoothness of the group order with the Pohlig-Hellman attack.
+
+   ```python
+   def recover_prime(points):
+       """Recover p from the public points by computing gcd of x^2+y^2-1."""
+       candidates = [x * x + y * y - 1 for x, y in points]
+       return reduce(gcd, candidates)
+
+   p = recover_prime([BASE, ALICE_PUB, BOB_PUB])
+   ```
+
+2. Recover either Alice's or Bob's private key by "solving" the DLP by exploiting the smoothness of the group order with the Pohlig-Hellman attack.
+
+   1. Factor the group order into its prime factors with trial division.
+
+   ```python
+   def factorize_smooth(n):
+       """Trial-division factorization. Fast here because p+1 is very smooth."""
+       factors = {}
+       while n % 2 == 0:
+           factors[2] = factors.get(2, 0) + 1
+           n //= 2
+
+       d = 3
+       lim = isqrt(n)
+       while d <= lim and n > 1:
+           while n % d == 0:
+               factors[d] = factors.get(d, 0) + 1
+               n //= d
+               lim = isqrt(n)
+           d += 2
+
+       if n > 1:
+           factors[n] = factors.get(n, 0) + 1
+       return factors
+   ```
+
+   2. For each prime factor, compute the discrete log mod that prime factor by brute force with the baby-step giant-step algorithm.
+
+   ```python
+   print("todo")
+   ```
+
+   3. Combine the results with the Chinese Remainder Theorem to get the private key.
+
+   ```python
+   def crt_pair(a1, m1, a2, m2):
+       """Solve x ≡ a1 (mod m1) and x ≡ a2 (mod m2) for coprime m1, m2 with Chinese Remainder Theorem."""
+       inv = pow(m1, -1, m2)
+       t = ((a2 - a1) * inv) % m2
+       x = a1 + m1 * t
+       return x % (m1 * m2), m1 * m2
+
+   def crt_all(mods, rems):
+       """Solve x ≡ a (mod m) for all (a, m) pairs with Chinese Remainder Theorem."""
+       x = rems[0]
+       m = mods[0]
+       for i in range(1, len(mods)):
+           x, m = crt_pair(x, m, rems[i], mods[i])
+       return x
+   ```
+
 3. Use either private key to compute shared secret symmetric key.
+
+   ```python
+   shared = scalar_mult(BOB_PUB, alice_secret, p)
+   key = md5(f"{shared[0]},{shared[1]}".encode()).digest()
+   ```
+
 4. Decrypt the flag with recovered symmetric key.
+
+   ```python
+   pt = AES.new(key, AES.MODE_ECB).decrypt(enc)
+   flag = unpad(pt, 16).decode()
+   ```
 
 ## Remediation
 

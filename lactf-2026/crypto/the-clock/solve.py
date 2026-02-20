@@ -162,9 +162,9 @@ def main():
 
     enc = bytes.fromhex(ENC_FLAG_HEX)
     pt = AES.new(key, AES.MODE_ECB).decrypt(enc)
-    flag = unpad(pt, 16)
+    flag = unpad(pt, 16).decode()
 
-    print("decrypted flag:", flag.decode())
+    print("decrypted flag:", flag)
 
 
 if __name__ == "__main__":
