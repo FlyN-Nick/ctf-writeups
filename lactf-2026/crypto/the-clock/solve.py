@@ -133,10 +133,19 @@ def pohlig_hellman_two_targets(p_base, p_alice, p_bob, group_order, p):
 
     return crt_all(remainders_alice, moduli), crt_all(remainders_bob, moduli)
 
+def calculate_norm(P, p):
+    """Calculate the norm of a point P = (x, y) as x^2 + y^2 mod p."""
+    x, y = P
+    return (x * x + y * y) % p
+
 
 def main():
     p = recover_prime([BASE, ALICE_PUB, BOB_PUB])
     print(f"recovered p: {p}")
+    
+    for point in [BASE, ALICE_PUB, BOB_PUB]:
+        if calculate_norm(point, p) != 1:
+            raise ValueError("Point does not lie on the curve defined by x^2 + y^2 ≡ 1 mod p.")
 
     group_order = p + 1 if p % 4 == 3 else p - 1
     alice_secret, bob_secret = pohlig_hellman_two_targets(BASE, ALICE_PUB, BOB_PUB, group_order, p)
@@ -145,7 +154,8 @@ def main():
 
     shared = shared_alice = scalar_mult(BOB_PUB, alice_secret, p)
     shared_bob = scalar_mult(ALICE_PUB, bob_secret, p)
-    assert shared_alice == shared_bob
+    if shared_alice != shared_bob:
+        raise ValueError("Shared secrets do not match, something went wrong.")
     print(f"shared secret: {shared}")
     
     key = md5(f"{shared[0]},{shared[1]}".encode()).digest()
