@@ -49,11 +49,6 @@ def scalar_mult(P, n, p):
     return R
 
 
-def negate_point(P, p):
-    x, y = P
-    return ((-x) % p, y)
-
-
 def recover_prime(points):
     """Recover p from the public points by computing gcd of x^2+y^2-1."""
     candidates = [x * x + y * y - 1 for x, y in points]
@@ -82,25 +77,22 @@ def factorize_smooth(n):
 
 
 def dlog_bsgs(H, G, n, p):
-    """Solve k such that H = k*G in subgroup of order n using Baby-step Giant-step algorithm."""
+    """Solve x such that H = x*G in subgroup of order n using Baby-step Giant-step algorithm."""
     m = isqrt(n) + 1
     cur = (0, 1)
-    baby = {cur: 0}
+    baby_steps = {cur: 0}
     for j in range(1, m):
         cur = clock_add(cur, G, p)
-        if cur not in baby:
-            baby[cur] = j
+        if cur not in baby_steps:
+            baby_steps[cur] = j
 
-    mG = scalar_mult(G, m, p)
-    neg_mG = negate_point(mG, p)
+    neg_mG = scalar_mult(G, n - m, p)
 
     gamma = H
-    for i in range(m + 1):
-        j = baby.get(gamma)
+    for i in range(m):
+        j = baby_steps.get(gamma)
         if j is not None:
-            k = i * m + j
-            if k < n:
-                return k
+            return (i * m + j) % n
         gamma = clock_add(gamma, neg_mG, p)
     raise ValueError("No discrete log found.")
 
