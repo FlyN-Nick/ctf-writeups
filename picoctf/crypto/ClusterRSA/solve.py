@@ -1,101 +1,91 @@
 #!/usr/bin/env python3
+import argparse
 import gmpy2
-import shutil
-import subprocess
 
-n = 8749002899132047699790752490331099938058737706735201354674975134719667510377522805717156720453193651
+n = gmpy2.mpz(
+    8749002899132047699790752490331099938058737706735201354674975134719667510377522805717156720453193651
+)
 e = 65537
-ct = 3021569373773402689513257373362764131880473249842187164838297943840513930619586623604677697191914325
+ct = gmpy2.mpz(
+    3021569373773402689513257373362764131880473249842187164838297943840513930619586623604677697191914325
+)
 
-_rng = gmpy2.random_state(0xC0FFEE)
-
-def _randrange(n):
-    # return random integer in [1, n-1]
-    return gmpy2.mpz_random(_rng, n - 1) + 1
-
-
-def pollard_brent(n):
-    if n % 2 == 0:
-        return gmpy2.mpz(2)
-    if n % 3 == 0:
-        return gmpy2.mpz(3)
-
-    while True:
-        y = _randrange(n)
-        c = _randrange(n)
-        m = 128
-        g = r = q = gmpy2.mpz(1)
-        while g == 1:
-            x = y
-            for _ in range(int(r)):
-                y = (y * y + c) % n
-            k = 0
-            while k < r and g == 1:
-                ys = y
-                for _ in range(int(min(m, r - k))):
-                    y = (y * y + c) % n
-                    q = (q * abs(x - y)) % n
-                g = gmpy2.gcd(q, n)
-                k += m
-            r *= 2
-
-        if g == n:
-            while True:
-                ys = (ys * ys + c) % n
-                g = gmpy2.gcd(abs(x - ys), n)
-                if g > 1:
-                    break
-        if g != n:
-            return g
+def decode_int(value):
+    byte_len = max(1, (value.bit_length() + 7) // 8)
+    return int(value).to_bytes(byte_len, "big").decode()
 
 
-def factor(n, out):
-    if n == 1:
-        return
-    if gmpy2.is_prime(n):
-        out.append(n)
-        return
-    d = pollard_brent(n)
-    factor(d, out)
-    factor(n // d, out)
+def factor_from_cluster(modulus, factor_count):
+    root, exact = gmpy2.iroot(modulus, factor_count)
+    if not exact:
+        root += 1
+    start = root - CLUSTER_SPAN
+    end = root + CLUSTER_SPAN
 
+    if start < 3:
+        start = 3
+    if start % 2 == 0:
+        start += 1
 
-def factor_with_gmpy2():
     factors = []
-    factor(gmpy2.mpz(n), factors)
-    return sorted(int(x) for x in factors)
+    candidate = start
+    while candidate <= end:
+        if gmpy2.is_prime(candidate) and modulus % candidate == 0:
+            factors.append(int(candidate))
+            if len(factors) == factor_count:
+                return factors
+        candidate += 2
 
-
-def factor_with_sage():
-    if not shutil.which("sage"):
-        raise RuntimeError("sage not found")
-    cmd = (
-        "HOME=/tmp sage -c "
-        "'n=%d; print(factor(n))'"
-        % n
+    raise ValueError(
+        f"failed to recover {factor_count} clustered primes within +/-{CLUSTER_SPAN}"
     )
-    out = subprocess.check_output(cmd, shell=True, text=True).strip()
-    # Output format: p1 * p2 * p3 * p4
-    factors = [int(x.strip()) for x in out.split("*")]
+
+
+def factor_modulus(modulus):
+    factor_count = 3
+    while True:
+        try:
+            print(f"\rTrying {factor_count} prime factors...", end="")
+            factors = sorted(factor_from_cluster(modulus, factor_count))
+            product = 1
+            for factor in factors:
+                product *= factor
+            if product == modulus:
+                return factors
+        except ValueError:
+            pass
+
+        root, _ = gmpy2.iroot(modulus, factor_count)
+        if root <= 3:
+            break
+
+        factor_count += 1
+
+    factors = []
+    if not factors:
+        print(f"\nClustered prime factorization unsuccessful. Try a larger CLUSTER_SPAN instead of {CLUSTER_SPAN}")
+        exit(1)
     return sorted(factors)
 
-
 def main():
-    factors = factor_with_sage() if shutil.which("sage") else factor_with_gmpy2()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-s", "--cluster-span", type=int, help="cluster span for prime factorization", default=400_000)
+    args = parser.parse_args()
+
+    global CLUSTER_SPAN 
+    CLUSTER_SPAN= args.cluster_span
+
+    factors = factor_modulus(n)
 
     phi = 1
-    for p in factors:
-        phi *= (p - 1)
+    for prime in factors:
+        phi *= prime - 1
 
     d = pow(e, -1, phi)
     plaintext = pow(ct, d, n)
-    plaintext_hex = hex(plaintext)[2:]
-    if len(plaintext_hex) % 2:
-        plaintext_hex = "0" + plaintext_hex
-    flag = bytes.fromhex(plaintext_hex).decode()
 
-    print(f"factors: {factors}")
-    print(f"flag: {flag}")
+    print(f"\nfactors: {factors}")
+    print(f"flag: {decode_int(plaintext)}")
 
 
 if __name__ == "__main__":
