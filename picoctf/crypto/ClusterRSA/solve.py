@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import argparse
 import gmpy2
 
 n = gmpy2.mpz(
@@ -9,10 +8,21 @@ e = 65537
 ct = gmpy2.mpz(
     3021569373773402689513257373362764131880473249842187164838297943840513930619586623604677697191914325
 )
+INITIAL_CLUSTER_SPAN = 1_000
+MAX_CLUSTER_SPAN = 1_000_000
+CLUSTER_GROWTH_FACTOR = 2
+
 
 def decode_int(value):
     byte_len = max(1, (value.bit_length() + 7) // 8)
     return int(value).to_bytes(byte_len, "big").decode()
+
+
+def print_progress(span, factor_count):
+    print(
+        f"\rSearching clustered primes within +/-{span} | Trying {factor_count} prime factors...",
+        end="",
+    )
 
 
 def factor_from_cluster(modulus, factor_count):
@@ -45,7 +55,7 @@ def factor_modulus(modulus):
     factor_count = 3
     while True:
         try:
-            print(f"\rTrying {factor_count} prime factors...", end="")
+            print_progress(CLUSTER_SPAN, factor_count)
             factors = sorted(factor_from_cluster(modulus, factor_count))
             product = 1
             for factor in factors:
@@ -61,21 +71,39 @@ def factor_modulus(modulus):
 
         factor_count += 1
 
-    factors = []
-    if not factors:
-        print(f"\nClustered prime factorization unsuccessful. Try a larger CLUSTER_SPAN instead of {CLUSTER_SPAN}")
-        exit(1)
-    return sorted(factors)
+    raise ValueError(
+        f"clustered prime factorization unsuccessful within +/-{CLUSTER_SPAN}"
+    )
+
+
+def factor_modulus_with_expanding_span(modulus, initial_span, max_span, growth_factor):
+    span = initial_span
+
+    while span <= max_span:
+        global CLUSTER_SPAN
+        CLUSTER_SPAN = span
+
+        try:
+            return factor_modulus(modulus)
+        except ValueError:
+            if span == max_span:
+                break
+
+            next_span = min(max_span, max(span + 1, span * growth_factor))
+            span = next_span
+
+    raise ValueError(
+        f"failed to recover clustered primes after expanding to +/-{max_span}"
+    )
+
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-s", "--cluster-span", type=int, help="cluster span for prime factorization", default=400_000)
-    args = parser.parse_args()
-
-    global CLUSTER_SPAN 
-    CLUSTER_SPAN= args.cluster_span
-
-    factors = factor_modulus(n)
+    factors = factor_modulus_with_expanding_span(
+        n,
+        initial_span=INITIAL_CLUSTER_SPAN,
+        max_span=MAX_CLUSTER_SPAN,
+        growth_factor=CLUSTER_GROWTH_FACTOR,
+    )
 
     phi = 1
     for prime in factors:
