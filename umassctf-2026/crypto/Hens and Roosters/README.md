@@ -2,18 +2,24 @@
 
 ## Summary
 
+Please help me buy more Legos! The store has such aggressive rate limiting I can't even get an ID!
+
 The challenge presents a web application where users must accumulate seven "studs" to purchase a Lego set and obtain the flag. Studs are earned by submitting valid signatures for the current stud count. While the server provides free signatures for the first three studs (0, 1, and 2), reaching seven requires bypassing rate limits, exploiting a race condition, and leveraging a cryptographic property of the signature scheme to "clone" valid signatures.
 
 **Artifacts:**
 
 - `backend/app.py`: Flask application handling user progress and signature verification.
 - `backend/uov.py`: Implementation of the Unbalanced Oil and Vinegar (UOV) signature scheme.
+- `backend/public_key.sobj`: Serialized SageMath object containing the UOV public key matrices.
+- `backend/Dockerfile`: Container definition for the Flask backend.
 - `proxy/haproxy.cfg`: HAProxy configuration with a vulnerable rate-limiting rule.
+- `proxy/Dockerfile`: Container definition for the HAProxy reverse proxy.
+- `compose.yaml`: Docker Compose file orchestrating the backend, proxy, and Redis services.
 - `solve.py`: Exploit script demonstrating the full attack chain.
 
 ## Context
 
-The application uses the **Unbalanced Oil and Vinegar (UOV)** signature scheme over the extension field $\mathbb{F}_{2^7}$. A user is identified by a `uid`, and their progress (number of studs) is stored in Redis. 
+The application uses the **Unbalanced Oil and Vinegar (UOV)** signature scheme over the extension field $\mathbb{F}_{2^7}$. UOV is a multivariate public-key signature scheme. The signer partitions $n$ variables into $v$ "vinegar" variables (chosen at random) and $m$ "oil" variables (solved for). The public key is a set of $m$ multivariate quadratic polynomials over a finite field; the private key is the linear transformation $T$ that maps the oil/vinegar structure to the public variables, enabling efficient signing. Verification checks that the signature satisfies all $m$ public polynomial equations. Security relies on the hardness of solving random systems of multivariate quadratic equations (the MQ problem). A user is identified by a `uid`, and their progress (number of studs) is stored in Redis.
 
 To gain a stud, a user must `POST` a valid signature for the payload `str(studs) + '|' + uid` to the `/work` endpoint. The server implements a caching mechanism in Redis to speed up verification of recently seen signatures:
 
@@ -23,13 +29,15 @@ def work():
     # ... read studs and payload ...
     value = r.get(str(sig))
     if value is None:
-        r.set(sig, b'-', ex=240)
-        verified = uov.verify(payload, sig_bytes) # Slow path (~2.5s)
+        r.set(sig, b'-', ex=240)        # Reserve slot; blocks re-submission of same sig
+        verified = uov.verify(payload, sig_bytes)  # Slow path (~2.5s)
         if verified:
             r.set(sig, payload, ex=240)
+    elif value == b'-':
+        return "The signature is still being processed, please send a request later!"
     else:
-        verified = value.decode() == payload # Fast path (cache hit)
-    
+        verified = value.decode() == payload       # Fast path (cache hit)
+
     if verified:
         studs = r.incr(uid)
         # ... return next free signature if studs <= 2 ...
@@ -55,7 +63,7 @@ By appending unique query parameters (e.g., `/work?x=1`, `/work?x=2`), an attack
 
 ### 2. TOCTOU Race Condition in `/work` - [CWE-367: Time-of-Check Time-of-Use (TOCTOU) Race Condition](https://cwe.mitre.org/data/definitions/367.html)
 
-The `/work` endpoint reads the current stud count from Redis at the beginning of the request and only increments it after a successful (and slow) signature verification. 
+The `/work` endpoint reads the current stud count from Redis at the beginning of the request and only increments it after a successful (and slow) signature verification.
 
 ```python
 studs = r.get(uid)                      # (1) Read current count
@@ -69,45 +77,96 @@ Because verification takes several seconds, multiple concurrent requests can all
 
 ### 3. UOV Frobenius Signature Cloning - [CWE-327: Use of a Broken or Risky Cryptographic Algorithm](https://cwe.mitre.org/data/definitions/327.html)
 
-The UOV implementation uses public key matrices $P_i$ with coefficients restricted to the base field $\mathbb{F}_2 \subseteq \mathbb{F}_{2^7}$. Additionally, the verification targets $t_i$ are bits derived from a hash, so $t_i \in \{0, 1\}$.
+**Verification equation.** The UOV public key consists of $m = 57$ symmetric matrices $P_1, \ldots, P_m \in \mathbb{F}_{2^7}^{n \times n}$ (where $n = 254$). To verify a signature $\mathbf{x} \in \mathbb{F}_{2^7}^n$ against a message, the verifier checks:
 
-In any field of characteristic 2, the Frobenius automorphism $\sigma(x) = x^2$ is linear. If a signature $\mathbf{x}$ satisfies the verification equation $\mathbf{x}^\top P_i \mathbf{x} = t_i$, then applying $\sigma$ to $\mathbf{x}$ yields:
+$$
+\mathbf{x}^\top P_i \, \mathbf{x} = t_i \quad \text{for all } i = 1, \ldots, m
+$$
 
-$$\sigma(\mathbf{x})^\top P_i \sigma(\mathbf{x}) = \sigma(\mathbf{x}^\top P_i \mathbf{x}) = \sigma(t_i) = t_i$$
+where each target $t_i \in \{0, 1\}$ is a bit extracted from the message hash (via SHAKE-128).
 
-The equality $\sigma(P_i) = P_i$ and $\sigma(t_i) = t_i$ holds because their elements are in $\mathbb{F}_2$, which is fixed by $\sigma$. Since $[\mathbb{F}_{2^7} : \mathbb{F}_2] = 7$, an attacker can generate 6 additional valid signatures for the *same* message from a single observed signature. These "cloned" signatures are not in the server's Redis cache, forcing every concurrent request into the slow verification path and widening the race window.
+**The weak parameterization.** In this implementation, the public key matrices are constructed such that all entries $(P_i)_{jk} \in \mathbb{F}_2 \subseteq \mathbb{F}_{2^7}$ — i.e., every coefficient is either 0 or 1. This is the root cause of the vulnerability.
+
+**The Frobenius automorphism.** The map $\sigma : \mathbb{F}_{2^7} \to \mathbb{F}_{2^7}$ defined by $\sigma(a) = a^2$ is a field automorphism (the Frobenius). Being a ring homomorphism, it satisfies $\sigma(a + b) = \sigma(a) + \sigma(b)$ and $\sigma(ab) = \sigma(a)\sigma(b)$. Applied componentwise to a vector, $\sigma(\mathbf{x})_j = x_j^2$.
+
+**Why $\sigma(\mathbf{x})$ is also a valid signature.** Expanding the quadratic form for the cloned vector $\sigma(\mathbf{x})$:
+
+$$
+\sigma(\mathbf{x})^\top P_i \, \sigma(\mathbf{x}) = \sum_{j,k} x_j^2 \cdot (P_i)_{jk} \cdot x_k^2
+$$
+
+Since $(P_i)_{jk} \in \mathbb{F}_2$, it is fixed by $\sigma$, so $(P_i)_{jk}^2 = (P_i)_{jk}$. Using multiplicativity of $\sigma$:
+
+$$
+= \sum_{j,k} \sigma\!\left(x_j \cdot (P_i)_{jk} \cdot x_k\right) = \sigma\!\left(\sum_{j,k} x_j \cdot (P_i)_{jk} \cdot x_k\right) = \sigma\!\left(\mathbf{x}^\top P_i \, \mathbf{x}\right) = \sigma(t_i) = t_i
+$$
+
+The last step holds because $t_i \in \mathbb{F}_2$ is also fixed by $\sigma$. Therefore $\sigma(\mathbf{x})$ satisfies all $m$ verification equations for the same message.
+
+**The orbit.** The Frobenius generates the Galois group $\text{Gal}(\mathbb{F}_{2^7}/\mathbb{F}_2) \cong \mathbb{Z}/7\mathbb{Z}$, so $\sigma^7 = \text{id}$. For a generic signature $\mathbf{x}$ (one whose components are not all in $\mathbb{F}_2$), the orbit $\{\mathbf{x},\, \sigma(\mathbf{x}),\, \sigma^2(\mathbf{x}),\, \ldots,\, \sigma^6(\mathbf{x})\}$ has exactly 7 distinct elements, yielding **6 additional valid signatures** from a single observed one.
 
 ## Exploitation
 
 The exploit is implemented in `solve.py` and follows these steps:
 
-1.  **Preparation**: Use the rate-limit bypass to quickly obtain `sig_2` (the signature for `"2|uid"`) from the server by advancing from 0 to 2 studs.
-2.  **Signature Cloning**: Compute the Frobenius orbit of `sig_2` by repeatedly squaring each byte in $\mathbb{F}_{2^7}$ using the irreducible polynomial $x^7 + x + 1$. This produces 5 new, uncached signatures for the payload `"2|uid"`.
-3.  **The Race**: Submit the 5 cloned signatures concurrently using unique query parameters. 
-    - Each request bypasses HAProxy's rate limit.
-    - Each request hits the "slow path" in `/work` because the cloned signatures are uncached.
-    - All 5 requests read `studs = 2` from Redis before any of them completes verification.
-4.  **Completion**: Once the verifications finish, all 5 requests call `r.incr(uid)`, advancing the stud count to 7. The attacker then calls `/buy` to retrieve the flag.
+1. **Preparation**: Obtain `sig_2` — the server-issued signature for `"2|uid"` — by advancing from 0 to 2 studs. The unique `?x=` query parameters bypass HAProxy's per-URL rate limit on each request.
 
 ```python
-def _gf128_sq(a: int) -> int:
-    """Square an element of GF(2^7) under x^7 + x + 1."""
+def buy():
+    return re.search(r"signature: ([0-9a-f]+)", requests.get(f"{BASE_URL}/buy", params={"uid": uid, "x": time.time()}).text).group(1)
+
+def work(sig):
+    return re.search(r"stud is ([0-9a-f]+)", requests.post(f"{BASE_URL}/work?x={time.time()}", json={"uid": uid, "sig": sig}).text).group(1)
+
+sig_2 = work(work(buy()))
+```
+
+2. **Signature Cloning**: Compute 6 Frobenius variants of `sig_2` by applying $\sigma$ componentwise — squaring each byte of the signature in $\mathbb{F}_{2^7}$.
+
+`gf2_7_square` computes $a^2 \bmod (x^7 + x + 1)$ for a single field element $a$, represented as a 7-bit integer. It uses the standard shift-and-accumulate method for polynomial multiplication in $\mathbb{F}_2[x]$: it iterates over the 7 bits of $a$ (treating it as the multiplier), and for each set bit XORs the current shifted value of $a$ into the accumulator `p`. After each bit, $a$ is shifted left by one (equivalent to multiplying by $x$) and reduced modulo $x^7 + x + 1$ if the degree-7 term would overflow — the `hi` bit detects this overflow and the `^= 0x03` applies the reduction $x^7 \equiv x + 1$, i.e., XORs the low two bits.
+
+```python
+def gf2_7_square(a: int) -> int:
     p, b = 0, a
     for _ in range(7):
-        if b & 1: p ^= a
-        b >>= 1
-        hi = a >> 6
-        a = (a << 1) & 0x7F
-        if hi: a ^= 0x03
+        if b & 1: p ^= a   # if current bit of b is set, accumulate current a into p
+        b >>= 1             # advance to next bit
+        hi = a >> 6         # detect if next shift will overflow 7 bits
+        a = (a << 1) & 0x7F # shift a left (multiply by x), mask to 7 bits
+        if hi: a ^= 0x03    # reduce: x^7 ≡ x + 1, so XOR 0b0000011
     return p
-
-def frob_clone(sig_hex: str):
-    """Generate a new valid signature using Frobenius."""
-    return bytes(_gf128_sq(b) for b in bytes.fromhex(sig_hex)).hex()
 ```
+
+`frob` applies `gf2_7_square` to every byte of the signature `n` times in succession, collecting each intermediate result. `variants[0]` is $\sigma(\mathbf{x})$, `variants[1]` is $\sigma^2(\mathbf{x})$, and so on up to `variants[6]` = $\sigma^7(\mathbf{x}) = \mathbf{x}$.
+
+```python
+def frob(sig_hex: str, n: int) -> list[str]:
+    variants, cur = [], bytes.fromhex(sig_hex)
+    for _ in range(n):
+        cur = bytes(gf2_7_square(b) for b in cur)  # apply σ to every byte
+        variants.append(cur.hex())
+    return variants[1:]  # skip σ¹, return σ² … σ⁷ (= σ⁰ = original)
+
+clones = frob(sig_2, 7)  # 6 Frobenius clones: σ²(sig_2) … σ⁷(sig_2)
+```
+
+3. **The Race**: Submit all 6 cloned signatures concurrently. Each request uses a unique `?x=` parameter to bypass HAProxy. Because the clones are not cached, every request enters the slow verification path (~2.5 s). The `b'-'` placeholder in Redis only blocks re-submission of the *same* signature; since all 6 clones are distinct, they race in parallel without blocking each other. All 6 requests read `studs = 2` from Redis before any verification completes.
+
+```python
+async def race(uid: str, sigs: list[str]):
+    async def post(i, sig):
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(force_close=True)) as s:
+            async with s.post(f"{BASE_URL}/work?x={i}", json={"uid": uid, "sig": sig}, timeout=TIMEOUT) as r:
+                return await r.text()
+    await asyncio.gather(*(post(i, sig) for i, sig in enumerate(sigs)))
+
+asyncio.run(race(uid, clones))
+```
+
+4. **Completion**: Once all verifications finish, each successful request calls `r.incr(uid)`, advancing the stud count from 2 to at least 7. The attacker then calls `/buy` to retrieve the flag.
 
 ## Remediation
 
-1.  **Secure Rate Limiting**: Configure HAProxy to track request rates by `path` or `src` (IP address) rather than the full `url` to prevent query-parameter-based bypasses.
-2.  **Atomic State Updates**: Use atomic Redis operations or Lua scripts to ensure that the "read-verify-increment" cycle is protected against race conditions. For example, use a lock or check that the stud count hasn't changed before incrementing.
-3.  **Proper UOV Parameterization**: Ensure that the secret linear transformation $T$ (and consequently the public key) is chosen with entries from the full extension field $\mathbb{F}_{2^7}$ rather than being restricted to the subfield $\mathbb{F}_2$. This breaks the Frobenius symmetry.
+1. **Secure Rate Limiting**: Configure HAProxy to track request rates by `path` or `src` (IP address) rather than the full `url` to prevent query-parameter-based bypasses.
+2. **Atomic State Updates**: Use atomic Redis operations or Lua scripts to ensure that the "read-verify-increment" cycle is protected against race conditions. For example, use a lock or check that the stud count hasn't changed before incrementing.
+3. **Proper UOV Parameterization**: Ensure that the secret linear transformation $T$ (and consequently the public key) is chosen with entries from the full extension field $\mathbb{F}_{2^7}$ rather than being restricted to the subfield $\mathbb{F}_2$. This breaks the Frobenius symmetry.
