@@ -73,7 +73,7 @@ if verified:
     studs = r.incr(uid)                 # (3) Increment count
 ```
 
-Because verification takes several seconds, multiple concurrent requests can all read the same `studs` value (e.g., `2`), verify their respective signatures for the same payload (`"2|uid"`), and then all trigger the increment. This allows jumping from 2 studs to 7 studs in a single race window.
+Because verification takes several seconds, multiple concurrent requests can all read the same `studs` value (e.g., `2`), verify their respective signatures for the same payload (`"2|uid"`), and then all trigger the increment. This allows jumping from 2 studs to 8 studs (one increment per successful clone) in a single race window.
 
 ### 3. UOV Frobenius Signature Cloning - [CWE-327: Use of a Broken or Risky Cryptographic Algorithm](https://cwe.mitre.org/data/definitions/327.html)
 
@@ -128,9 +128,11 @@ The last step holds because $t\_i \in \mathbb{F}\_2$ is also fixed by $\sigma$. 
 
 The exploit is implemented in `solve.py` and follows these steps:
 
-1. **Preparation**: Obtain `sig_2` — the server-issued signature for `"2|uid"` — by advancing from 0 to 2 studs. The unique `?x=` query parameters bypass HAProxy's per-URL rate limit on each request.
+1. **Preparation**: Create a user session by calling `GET /` (which allocates a fresh `uid` in Redis), then obtain `sig_2` — the server-issued signature for `"2|uid"` — by advancing from 0 to 2 studs.
 
 ```python
+uid = re.search(r"uid is ([0-9a-f]+)", requests.get(f"{BASE_URL}/?x={time.time()}").text).group(1)
+
 def buy():
     return re.search(r"signature: ([0-9a-f]+)", requests.get(f"{BASE_URL}/buy", params={"uid": uid, "x": time.time()}).text).group(1)
 
@@ -142,7 +144,7 @@ sig_2 = work(work(buy()))
 
 2. **Signature Cloning**: Compute 6 Frobenius variants of `sig_2` by applying $\sigma$ componentwise — squaring each byte of the signature in $\mathbb{F}\_{2^7}$.
 
-`gf2_7_square` computes $a^2 \bmod (x^7 + x + 1)$ for a single field element $a$, represented as a 7-bit integer. It uses the standard shift-and-accumulate method for polynomial multiplication in $\mathbb{F}\_2[x]$: it iterates over the 7 bits of $a$ (treating it as the multiplier), and for each set bit XORs the current shifted value of $a$ into the accumulator `p`. After each bit, $a$ is shifted left by one (equivalent to multiplying by $x$) and reduced modulo $x^7 + x + 1$ if the degree-7 term would overflow — the `hi` bit detects this overflow and the `^= 0x03` applies the reduction $x^7 \equiv x + 1$, i.e., XORs the low two bits.
+`gf2_7_square` computes $a^2 \bmod (x^7 + x + 1)$ for a single field element $a$, represented as a 7-bit integer. It uses the standard shift-and-accumulate method for polynomial multiplication in $\mathbb{F}\_2[x]$: `b` is initialised to a copy of `a` and serves as the multiplier — the loop iterates over `b`'s 7 bits, and for each set bit XORs the current value of `a` (the multiplicand, being doubled each step) into the accumulator `p`. After each bit, `a` is shifted left by one (equivalent to multiplying by $x$) and reduced modulo $x^7 + x + 1$ if the degree-7 term would overflow — the `hi` bit detects this overflow and the `^= 0x03` applies the reduction $x^7 \equiv x + 1$, i.e., XORs the low two bits.
 
 ```python
 def gf2_7_square(a: int) -> int:
