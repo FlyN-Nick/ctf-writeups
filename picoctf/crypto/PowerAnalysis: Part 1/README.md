@@ -4,7 +4,7 @@
 
 Challenge description: This embedded system allows you to measure the power consumption of the CPU while it is running an AES encryption algorithm. Use this information to leak the key via dynamic power analysis.
 
-The challenge exposes a server that encrypts arbitrary 16-byte plaintexts with a fixed unknown AES-128 key and returns a power trace — a sequence of ~2666 power measurements sampled during the encryption. By collecting many traces with random plaintexts and applying a **Correlation Power Analysis (CPA)** attack targeting the first SubBytes operation, the 16-byte key can be recovered one byte at a time.
+The challenge exposes a server that encrypts arbitrary 16-byte plaintexts with a fixed unknown AES-128 key and returns a power trace — a sequence of 2666 power measurements sampled during the encryption. By collecting many traces with random plaintexts and applying a **Correlation Power Analysis (CPA)** attack targeting the first SubBytes operation, the 16-byte key can be recovered one byte at a time.
 
 **Artifacts:**
 
@@ -122,7 +122,7 @@ def cpa_attack(plaintexts, traces, verbose=False):
 
 ### Results
 
-With 300 traces the correct key byte is decisively recovered for all 16 positions. The **correlation over time** plot shows that each byte produces a cluster of three closely-spaced correlation spikes — one for the AddRoundKey bus operation, one for the SBOX table lookup landing on the data bus, and one for the result being written back to the state array. All three are functions of `HW(SBOX[pt[i] XOR key[i]])` and therefore correlated with the correct key hypothesis.
+With 300 traces the correct key byte is decisively recovered for all 16 positions. The **correlation over time** plot shows that each byte produces a cluster of three closely-spaced correlation spikes, all corresponding to pipeline stages of the SubBytes table lookup: the SBOX output value `SBOX[pt[i] XOR key[i]]` moves across the data bus in multiple distinct clock-cycle events — fetched from the lookup table into a register, propagated through the pipeline, and written back to the state array — each producing an independent power spike correlated with `HW(SBOX[pt[i] XOR key[i]])`.
 
 ![Correlation over time](plots/correlation_time.png)
 
