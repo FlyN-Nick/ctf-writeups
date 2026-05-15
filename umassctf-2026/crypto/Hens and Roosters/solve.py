@@ -2,7 +2,7 @@
 import asyncio, re, sys, time
 import requests, aiohttp
 
-BASE_URL = sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "http://34.71.177.222"
+BASE_URL = sys.argv[1].rstrip("/")
 TIMEOUT = 90
 
 def gf2_7_square(a: int) -> int:
@@ -22,7 +22,7 @@ def frob(sig_hex: str, n: int) -> list[str]:
     for _ in range(n):
         cur = bytes(gf2_7_square(b) for b in cur)
         variants.append(cur.hex())
-    return variants[1:]
+    return variants[:-1]
 
 async def race(uid: str, sigs: list[str]):
     async def post(i, sig):

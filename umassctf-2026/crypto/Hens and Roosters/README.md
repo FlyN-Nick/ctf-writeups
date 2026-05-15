@@ -145,12 +145,12 @@ def frob(sig_hex: str, n: int) -> list[str]:
     for _ in range(n):
         cur = bytes(gf2_7_square(b) for b in cur)  # apply σ to every byte
         variants.append(cur.hex())
-    return variants[1:]  # skip σ¹, return σ² … σ⁷ (= σ⁰ = original)
+    return variants[:-1] # skip the last one since σ^7 = σ^0
 
-clones = frob(sig_2, 7)  # 6 Frobenius clones: σ²(sig_2) … σ⁷(sig_2)
+clones = frob(sig_2, 7)  # 6 Frobenius clones: σ^1(sig_2) … σ^6(sig_2)
 ```
 
-3. **The Race**: Submit all 6 cloned signatures concurrently. Each request uses a unique `?x=` parameter to bypass HAProxy. Because the clones are not cached, every request enters the slow verification path (~2.5 s). The `b'-'` placeholder in Redis only blocks re-submission of the *same* signature; since all 6 clones are distinct, they race in parallel without blocking each other. All 6 requests read `studs = 2` from Redis before any verification completes.
+3. **The Race**: Submit all 6 cloned signatures concurrently. Each request uses a unique `?x=` parameter to bypass HAProxy. Because the clones are not cached, every request enters the slow verification path (~1-2 s). The `b'-'` placeholder in Redis only blocks re-submission of the *same* signature; since all 6 clones are distinct, they race in parallel without blocking each other. All 6 requests read `studs = 2` from Redis before any verification completes.
 
 ```python
 async def race(uid: str, sigs: list[str]):
