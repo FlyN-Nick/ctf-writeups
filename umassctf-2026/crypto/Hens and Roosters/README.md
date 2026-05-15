@@ -19,7 +19,7 @@ The challenge presents a web application where users must accumulate seven "stud
 
 ## Context
 
-The application uses the **Unbalanced Oil and Vinegar (UOV)** signature scheme over the extension field $\mathbb{F}_{2^7}$. UOV is a multivariate public-key signature scheme. The signer partitions $n$ variables into $v$ "vinegar" variables (chosen at random) and $m$ "oil" variables (solved for). The public key is a set of $m$ multivariate quadratic polynomials over a finite field; the private key is the linear transformation $T$ that maps the oil/vinegar structure to the public variables, enabling efficient signing. Verification checks that the signature satisfies all $m$ public polynomial equations. Security relies on the hardness of solving random systems of multivariate quadratic equations (the MQ problem). A user is identified by a `uid`, and their progress (number of studs) is stored in Redis.
+The application uses the **Unbalanced Oil and Vinegar (UOV)** signature scheme over the extension field $\mathbb{F}\_{2^7}$. UOV is a multivariate public-key signature scheme. The signer partitions $n$ variables into $v$ "vinegar" variables (chosen at random) and $m$ "oil" variables (solved for). The public key is a set of $m$ multivariate quadratic polynomials over a finite field; the private key is the linear transformation $T$ that maps the oil/vinegar structure to the public variables, enabling efficient signing. Verification checks that the signature satisfies all $m$ public polynomial equations. Security relies on the hardness of solving random systems of multivariate quadratic equations (the MQ problem). A user is identified by a `uid`, and their progress (number of studs) is stored in Redis.
 
 To gain a stud, a user must `POST` a valid signature for the payload `str(studs) + '|' + uid` to the `/work` endpoint. The server implements a caching mechanism in Redis to speed up verification of recently seen signatures:
 
@@ -77,33 +77,33 @@ Because verification takes several seconds, multiple concurrent requests can all
 
 ### 3. UOV Frobenius Signature Cloning - [CWE-327: Use of a Broken or Risky Cryptographic Algorithm](https://cwe.mitre.org/data/definitions/327.html)
 
-**Verification equation.** The UOV public key consists of $m = 57$ symmetric matrices $P_1, \ldots, P_m \in \mathbb{F}_{2^7}^{n \times n}$ (where $n = 254$). To verify a signature $\mathbf{x} \in \mathbb{F}_{2^7}^n$ against a message, the verifier checks:
+**Verification equation.** The UOV public key consists of $m = 57$ symmetric matrices $P\_1, \ldots, P\_m \in \mathbb{F}\_{2^7}^{n \times n}$ (where $n = 254$). To verify a signature $\mathbf{x} \in \mathbb{F}\_{2^7}^n$ against a message, the verifier checks:
 
 $$
-\mathbf{x}^\top P_i \, \mathbf{x} = t_i \quad \text{for all } i = 1, \ldots, m
+\mathbf{x}^\top P\_i \, \mathbf{x} = t\_i \quad \text{for all } i = 1, \ldots, m
 $$
 
-where each target $t_i \in \{0, 1\}$ is a bit extracted from the message hash (via SHAKE-128).
+where each target $t\_i \in \{0, 1\}$ is a bit extracted from the message hash (via SHAKE-128).
 
-**The weak parameterization.** In this implementation, the public key matrices are constructed such that all entries $(P_i)_{jk} \in \mathbb{F}_2 \subseteq \mathbb{F}_{2^7}$ — i.e., every coefficient is either 0 or 1. This is the root cause of the vulnerability.
+**The weak parameterization.** In this implementation, the public key matrices are constructed such that all entries $(P\_i)\_{jk} \in \mathbb{F}\_2 \subseteq \mathbb{F}\_{2^7}$ — i.e., every coefficient is either 0 or 1. This is the root cause of the vulnerability.
 
-**The Frobenius automorphism.** The map $\sigma : \mathbb{F}_{2^7} \to \mathbb{F}_{2^7}$ defined by $\sigma(a) = a^2$ is a field automorphism (the Frobenius). Being a ring homomorphism, it satisfies $\sigma(a + b) = \sigma(a) + \sigma(b)$ and $\sigma(ab) = \sigma(a)\sigma(b)$. Applied componentwise to a vector, $\sigma(\mathbf{x})_j = x_j^2$.
+**The Frobenius automorphism.** The map $\sigma : \mathbb{F}\_{2^7} \to \mathbb{F}\_{2^7}$ defined by $\sigma(a) = a^2$ is a field automorphism (the Frobenius). Being a ring homomorphism, it satisfies $\sigma(a + b) = \sigma(a) + \sigma(b)$ and $\sigma(ab) = \sigma(a)\sigma(b)$. Applied componentwise to a vector, $\sigma(\mathbf{x})\_j = x\_j^2$.
 
 **Why $\sigma(\mathbf{x})$ is also a valid signature.** Expanding the quadratic form for the cloned vector $\sigma(\mathbf{x})$:
 
 $$
-\sigma(\mathbf{x})^\top P_i \, \sigma(\mathbf{x}) = \sum_{j,k} x_j^2 \cdot (P_i)_{jk} \cdot x_k^2
+\sigma(\mathbf{x})^\top P\_i \, \sigma(\mathbf{x}) = \sum\_{j,k} x\_j^2 \cdot (P\_i)\_{jk} \cdot x_k^2
 $$
 
-Since $(P_i)_{jk} \in \mathbb{F}_2$, it is fixed by $\sigma$, so $(P_i)_{jk}^2 = (P_i)_{jk}$. Using multiplicativity of $\sigma$:
+Since $(P\_i)\_{jk} \in \mathbb{F}\_2$, it is fixed by $\sigma$, so $(P\_i)\_{jk}^2 = (P\_i)\_{jk}$. Using multiplicativity of $\sigma$:
 
 $$
-= \sum_{j,k} \sigma\!\left(x_j \cdot (P_i)_{jk} \cdot x_k\right) = \sigma\!\left(\sum_{j,k} x_j \cdot (P_i)_{jk} \cdot x_k\right) = \sigma\!\left(\mathbf{x}^\top P_i \, \mathbf{x}\right) = \sigma(t_i) = t_i
+= \sum\_{j,k} \sigma\!\left(x\_j \cdot (P\_i)\_{jk} \cdot x\_k\right) = \sigma\!\left(\sum_{j,k} x\_j \cdot (P\_i)\_{jk} \cdot x\_k\right) = \sigma\!\left(\mathbf{x}^\top P\_i \, \mathbf{x}\right) = \sigma(t\_i) = t\_i
 $$
 
-The last step holds because $t_i \in \mathbb{F}_2$ is also fixed by $\sigma$. Therefore $\sigma(\mathbf{x})$ satisfies all $m$ verification equations for the same message.
+The last step holds because $t\_i \in \mathbb{F}\_2$ is also fixed by $\sigma$. Therefore $\sigma(\mathbf{x})$ satisfies all $m$ verification equations for the same message.
 
-**The orbit.** The Frobenius generates the Galois group $\text{Gal}(\mathbb{F}_{2^7}/\mathbb{F}_2) \cong \mathbb{Z}/7\mathbb{Z}$, so $\sigma^7 = \text{id}$. For a generic signature $\mathbf{x}$ (one whose components are not all in $\mathbb{F}_2$), the orbit $\{\mathbf{x},\, \sigma(\mathbf{x}),\, \sigma^2(\mathbf{x}),\, \ldots,\, \sigma^6(\mathbf{x})\}$ has exactly 7 distinct elements, yielding **6 additional valid signatures** from a single observed one.
+**The orbit.** The Frobenius generates the Galois group $\text{Gal}(\mathbb{F}\_{2^7}/\mathbb{F}\_2) \cong \mathbb{Z}/7\mathbb{Z}$, so $\sigma^7 = \text{id}$. For a generic signature $\mathbf{x}$ (one whose components are not all in $\mathbb{F}\_2$), the orbit $\{\mathbf{x},\, \sigma(\mathbf{x}),\, \sigma^2(\mathbf{x}),\, \ldots,\, \sigma^6(\mathbf{x})\}$ has exactly 7 distinct elements, yielding **6 additional valid signatures** from a single observed one.
 
 ## Exploitation
 
@@ -123,7 +123,7 @@ sig_2 = work(work(buy()))
 
 2. **Signature Cloning**: Compute 6 Frobenius variants of `sig_2` by applying $\sigma$ componentwise — squaring each byte of the signature in $\mathbb{F}_{2^7}$.
 
-`gf2_7_square` computes $a^2 \bmod (x^7 + x + 1)$ for a single field element $a$, represented as a 7-bit integer. It uses the standard shift-and-accumulate method for polynomial multiplication in $\mathbb{F}_2[x]$: it iterates over the 7 bits of $a$ (treating it as the multiplier), and for each set bit XORs the current shifted value of $a$ into the accumulator `p`. After each bit, $a$ is shifted left by one (equivalent to multiplying by $x$) and reduced modulo $x^7 + x + 1$ if the degree-7 term would overflow — the `hi` bit detects this overflow and the `^= 0x03` applies the reduction $x^7 \equiv x + 1$, i.e., XORs the low two bits.
+`gf2_7_square` computes $a^2 \bmod (x^7 + x + 1)$ for a single field element $a$, represented as a 7-bit integer. It uses the standard shift-and-accumulate method for polynomial multiplication in $\mathbb{F}\_2[x]$: it iterates over the 7 bits of $a$ (treating it as the multiplier), and for each set bit XORs the current shifted value of $a$ into the accumulator `p`. After each bit, $a$ is shifted left by one (equivalent to multiplying by $x$) and reduced modulo $x^7 + x + 1$ if the degree-7 term would overflow — the `hi` bit detects this overflow and the `^= 0x03` applies the reduction $x^7 \equiv x + 1$, i.e., XORs the low two bits.
 
 ```python
 def gf2_7_square(a: int) -> int:
@@ -169,4 +169,4 @@ asyncio.run(race(uid, clones))
 
 1. **Secure Rate Limiting**: Configure HAProxy to track request rates by `path` or `src` (IP address) rather than the full `url` to prevent query-parameter-based bypasses.
 2. **Atomic State Updates**: Use atomic Redis operations or Lua scripts to ensure that the "read-verify-increment" cycle is protected against race conditions. For example, use a lock or check that the stud count hasn't changed before incrementing.
-3. **Proper UOV Parameterization**: Ensure that the secret linear transformation $T$ (and consequently the public key) is chosen with entries from the full extension field $\mathbb{F}_{2^7}$ rather than being restricted to the subfield $\mathbb{F}_2$. This breaks the Frobenius symmetry.
+3. **Proper UOV Parameterization**: Ensure that the secret linear transformation $T$ (and consequently the public key) is chosen with entries from the full extension field $\mathbb{F}\_{2^7}$ rather than being restricted to the subfield $\mathbb{F}\_2$. This breaks the Frobenius symmetry.
