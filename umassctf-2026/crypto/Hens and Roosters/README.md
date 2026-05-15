@@ -19,7 +19,7 @@ The challenge presents a web application where users must accumulate seven "stud
 
 ## Context
 
-The application uses the **Unbalanced Oil and Vinegar (UOV)** signature scheme over the extension field $\mathbb{F}\_{2^7}$. UOV is a multivariate public-key signature scheme. The signer partitions $n$ variables into $v$ "vinegar" variables (chosen at random) and $m$ "oil" variables (solved for). The public key is a set of $m$ multivariate quadratic polynomials over a finite field; the private key is the linear transformation $T$ that maps the oil/vinegar structure to the public variables, enabling efficient signing. Verification checks that the signature satisfies all $m$ public polynomial equations. Security relies on the hardness of solving random systems of multivariate quadratic equations (the MQ problem). A user is identified by a `uid`, and their progress (number of studs) is stored in Redis.
+The application uses the **Unbalanced Oil and Vinegar (UOV)** signature scheme over the extension field $\mathbb{F}\_{2^7}$. UOV is a multivariate public-key signature scheme. The signer partitions $n$ variables into $v$ "vinegar" variables (chosen at random) and $m$ "oil" variables (solved for). The public key is a set of $m$ multivariate quadratic polynomials over a finite field; the private key consists of the central maps $F\_i$, which define the quadratic structure over the oil/vinegar partition, and the invertible linear transformation $T$, which masks that structure by mapping internal coordinates to the public variables via $P\_i = T^\top F\_i T$. Verification checks that the signature satisfies all $m$ public polynomial equations. Security relies on the hardness of solving random systems of multivariate quadratic equations (the MQ problem). A user is identified by a `uid`, and their progress (number of studs) is stored in Redis.
 
 To gain a stud, a user must `POST` a valid signature for the payload `str(studs) + '|' + uid` to the `/work` endpoint. The server implements a caching mechanism in Redis to speed up verification of recently seen signatures:
 
@@ -77,7 +77,7 @@ Because verification takes several seconds, multiple concurrent requests can all
 
 ### 3. UOV Frobenius Signature Cloning - [CWE-327: Use of a Broken or Risky Cryptographic Algorithm](https://cwe.mitre.org/data/definitions/327.html)
 
-**Verification equation.** The UOV public key consists of $m = 57$ symmetric matrices $P\_1, \ldots, P\_m \in \mathbb{F}\_{2^7}^{n \times n}$ (where $n = 254$). To verify a signature $\mathbf{x} \in \mathbb{F}\_{2^7}^n$ against a message, the verifier checks:
+**Verification equation.** The UOV public key consists of $m = 57$ matrices $P\_1, \ldots, P\_m \in \mathbb{F}\_{2^7}^{n \times n}$ (where $n = 254$). To verify a signature $\mathbf{x} \in \mathbb{F}\_{2^7}^n$ against a message, the verifier checks:
 
 $$
 \mathbf{x}^\top P\_i \, \mathbf{x} = t\_i \quad \text{for all } i = 1, \ldots, m
@@ -85,20 +85,39 @@ $$
 
 where each target $t\_i \in \{0, 1\}$ is a bit extracted from the message hash (via SHAKE-128).
 
-**The weak parameterization.** In this implementation, the public key matrices are constructed such that all entries $(P\_i)\_{jk} \in \mathbb{F}\_2 \subseteq \mathbb{F}\_{2^7}$ — i.e., every coefficient is either 0 or 1. This is the root cause of the vulnerability.
+**The weak parameterization.** In this implementation, the public key matrices are constructed such that all entries $(P\_i)\_{jk} \in \mathbb{F}\_2 \subseteq \mathbb{F}\_{2^7}$ — i.e., every coefficient is either 0 or 1. This is the root cause of the vulnerability. To see why, recall that the public key is derived from the private key as $P\_i = T^\top F\_i T$, where $T$ is the secret invertible linear transformation and $F\_i$ are the "central maps." In a secure UOV instantiation, both $T$ and the central maps should have entries drawn uniformly from $\mathbb{F}\_{2^7}$. Here, however, both were generated with entries restricted to $\mathbb{F}\_2$ (i.e., $T \in \mathrm{GL}(n, \mathbb{F}\_2)$ and each $F\_i$ has binary entries). Since the product of matrices with entries in $\mathbb{F}\_2$ remains in $\mathbb{F}\_2$ regardless of the ambient field, the public key matrices $P\_i$ inherit this restriction. This can be confirmed empirically by inspecting the loaded key:
+
+```python
+pk = load('public_key')
+vals = set(e.to_integer() for P in pk for e in P.list())
+print(vals)  # {0, 1}
+```
+
+A corner of $P\_1$ illustrates the point — every entry is 0 or 1, even though the ambient field is $\mathbb{F}\_{2^7}$:
+
+```
+[1 0 1 1 1 1 0 1 0 1 0 0]
+[0 0 1 0 0 1 0 1 0 1 1 1]
+[0 0 0 1 0 0 0 0 0 0 0 1]
+[1 1 1 0 1 0 1 0 0 0 0 0]
+[0 0 0 0 1 0 1 1 0 0 0 1]
+[1 1 1 1 0 1 0 1 1 1 1 0]
+[0 1 0 1 1 0 1 0 0 0 1 1]
+[0 1 1 0 1 0 1 0 0 0 0 0]
+```
 
 **The Frobenius automorphism.** The map $\sigma : \mathbb{F}\_{2^7} \to \mathbb{F}\_{2^7}$ defined by $\sigma(a) = a^2$ is a field automorphism (the Frobenius). Being a ring homomorphism, it satisfies $\sigma(a + b) = \sigma(a) + \sigma(b)$ and $\sigma(ab) = \sigma(a)\sigma(b)$. Applied componentwise to a vector, $\sigma(\mathbf{x})\_j = x\_j^2$.
 
 **Why $\sigma(\mathbf{x})$ is also a valid signature.** Expanding the quadratic form for the cloned vector $\sigma(\mathbf{x})$:
 
 $$
-\sigma(\mathbf{x})^\top P\_i \, \sigma(\mathbf{x}) = \sum\_{j,k} x\_j^2 \cdot (P\_i)\_{jk} \cdot x_k^2
+\sigma(\mathbf{x})^\top P\_i \, \sigma(\mathbf{x}) = \sum\_{j,k} x\_j^2 \cdot (P\_i)\_{jk} \cdot x\_k^2
 $$
 
 Since $(P\_i)\_{jk} \in \mathbb{F}\_2$, it is fixed by $\sigma$, so $(P\_i)\_{jk}^2 = (P\_i)\_{jk}$. Using multiplicativity of $\sigma$:
 
 $$
-= \sum\_{j,k} \sigma\!\left(x\_j \cdot (P\_i)\_{jk} \cdot x\_k\right) = \sigma\!\left(\sum_{j,k} x\_j \cdot (P\_i)\_{jk} \cdot x\_k\right) = \sigma\!\left(\mathbf{x}^\top P\_i \, \mathbf{x}\right) = \sigma(t\_i) = t\_i
+= \sum\_{j,k} \sigma\!\left(x\_j \cdot (P\_i)\_{jk} \cdot x\_k\right) = \sigma\!\left(\sum\_{j,k} x\_j \cdot (P\_i)\_{jk} \cdot x\_k\right) = \sigma\!\left(\mathbf{x}^\top P\_i \, \mathbf{x}\right) = \sigma(t\_i) = t\_i
 $$
 
 The last step holds because $t\_i \in \mathbb{F}\_2$ is also fixed by $\sigma$. Therefore $\sigma(\mathbf{x})$ satisfies all $m$ verification equations for the same message.
@@ -121,7 +140,7 @@ def work(sig):
 sig_2 = work(work(buy()))
 ```
 
-2. **Signature Cloning**: Compute 6 Frobenius variants of `sig_2` by applying $\sigma$ componentwise — squaring each byte of the signature in $\mathbb{F}_{2^7}$.
+2. **Signature Cloning**: Compute 6 Frobenius variants of `sig_2` by applying $\sigma$ componentwise — squaring each byte of the signature in $\mathbb{F}\_{2^7}$.
 
 `gf2_7_square` computes $a^2 \bmod (x^7 + x + 1)$ for a single field element $a$, represented as a 7-bit integer. It uses the standard shift-and-accumulate method for polynomial multiplication in $\mathbb{F}\_2[x]$: it iterates over the 7 bits of $a$ (treating it as the multiplier), and for each set bit XORs the current shifted value of $a$ into the accumulator `p`. After each bit, $a$ is shifted left by one (equivalent to multiplying by $x$) and reduced modulo $x^7 + x + 1$ if the degree-7 term would overflow — the `hi` bit detects this overflow and the `^= 0x03` applies the reduction $x^7 \equiv x + 1$, i.e., XORs the low two bits.
 
